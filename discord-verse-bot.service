@@ -1,0 +1,16 @@
+[Unit]
+Description=Bam Trades Discord Verse of the Day Bot
+After=network.target
+
+[Service]
+Type=simple
+# Adjust these two paths if you place the project somewhere other than /home/ubuntu/discord-verse-bot
+WorkingDirectory=/home/ubuntu/discord-verse-bot
+ExecStart=/home/ubuntu/discord-verse-bot/venv/bin/python /home/ubuntu/discord-verse-bot/bot.py
+Restart=always
+RestartSec=10
+User=ubuntu
+EnvironmentFile=/home/ubuntu/discord-verse-bot/.env
+
+[Install]
+WantedBy=multi-user.target

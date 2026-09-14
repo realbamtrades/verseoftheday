@@ -44,41 +44,102 @@ The bot checks every minute whether it's past 9:00 AM Eastern and hasn't
 posted yet today — if you want to see a post happen without waiting until
 9am, temporarily set `POST_HOUR=0` in `.env` and run it.
 
-## 4. Deploy to Render (free Web Service)
+## 4. Deploy to Oracle Cloud Free Tier (your own VM, dedicated IP)
 
-Render's free tier only covers "Web Service" instances — not "Background
-Worker" — so this bot includes a tiny built-in web server whose only job is
-giving Render something to respond to. It doesn't affect the bot's actual
-function at all.
+This runs the bot on a real, always-on virtual machine that's yours alone —
+no shared IP with other people's apps, which avoids the Discord/Cloudflare
+rate-limit blocks that shared-IP platforms (Render, Railway, etc. free
+tiers) can run into.
 
-1. Push this folder to a GitHub repo.
-2. Go to [render.com](https://render.com) → **New +** → **Web Service** (not Background Worker) → connect and select your repo.
-3. Settings:
-   - Runtime: **Python 3**
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `python bot.py`
-   - Instance Type: **Free**
-4. Under **Environment Variables**, add `DISCORD_TOKEN` and `CHANNEL_ID` (and optionally `TRANSLATION` / `POST_HOUR`). Render sets `PORT` automatically — you don't need to add it yourself.
-5. Deploy. Check the **Logs** tab for `[verse-bot] Logged in as ...` and `[verse-bot] Health-check web server listening on port ...`.
+**4a. Create the VM**
+1. Sign up at [cloud.oracle.com](https://cloud.oracle.com) (requires a credit card for identity verification, but the Always Free resources never charge it).
+2. Once in the console: **Compute** → **Instances** → **Create Instance**.
+3. Name it anything. Under **Image and shape**, pick an **Always Free eligible** shape (Ampere A1 or VM.Standard.E2.1.Micro) — the console labels these clearly.
+4. Under **Add SSH keys**, choose "Generate a key pair" and **download the private key** — you'll need it to log in.
+5. Leave networking on defaults and click **Create**. Wait for it to show "Running," then copy its **Public IP Address**.
 
-### Keeping it awake (important)
+**4b. Connect and set up the server**
 
-Render's free Web Services spin down after ~15 minutes with no incoming HTTP
-traffic. Your bot doesn't receive HTTP traffic on its own — it only talks
-outward to Discord — so without help, Render will eventually treat it as
-idle and shut it down, which would silently stop your daily posts.
+From PowerShell (or any terminal), SSH in using the key you downloaded:
 
-To prevent that, use a free uptime-monitoring service to ping your Render
-URL every few minutes so it never looks idle:
+```powershell
+ssh -i "path\to\your-downloaded-key.key" ubuntu@YOUR_PUBLIC_IP
+```
 
-1. Once deployed, copy your service's public URL from the Render dashboard (looks like `https://your-bot-name.onrender.com`).
-2. Sign up at [UptimeRobot](https://uptimerobot.com) (free).
-3. Add a new monitor: **HTTP(s)**, paste your Render URL, set the check interval to **5 minutes**.
-4. Save it. UptimeRobot will now hit your bot's health-check endpoint every 5 minutes, keeping it awake 24/7.
+(Username is `ubuntu` for Ubuntu images, `opc` for Oracle Linux images.)
 
-This is a known workaround, not an official Render feature — it's the
-tradeoff for using the free tier instead of the paid Starter plan ($7/mo),
-which runs Background Workers with no spin-down and no pinging required.
+Once connected, install what you need:
+
+```bash
+sudo apt update && sudo apt install -y python3 python3-venv python3-pip git
+```
+
+**4c. Get your code onto the VM**
+
+Easiest path — clone straight from your GitHub repo:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/discord-verse-bot.git
+cd discord-verse-bot
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**4d. Configure**
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Fill in your real `DISCORD_TOKEN` and `CHANNEL_ID`, then save (Ctrl+O, Enter, Ctrl+X in nano).
+
+**4e. Test it**
+
+```bash
+python test_verses.py
+python bot.py
+```
+
+Confirm you see "Logged in as..." then stop it with Ctrl+C.
+
+**4f. Run it 24/7 with systemd**
+
+This repo includes `discord-verse-bot.service`, which keeps the bot running
+permanently and auto-restarts it if it ever crashes or the VM reboots.
+
+```bash
+sudo cp discord-verse-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable discord-verse-bot
+sudo systemctl start discord-verse-bot
+```
+
+Check it's running and see live logs:
+
+```bash
+sudo systemctl status discord-verse-bot
+journalctl -u discord-verse-bot -f
+```
+
+That's it — the bot now runs continuously on a dedicated IP, survives
+reboots, and restarts itself if it ever crashes.
+
+### <details><summary>Alternative: Render free Web Service (click to expand)</summary>
+
+Render's free tier only offers "Web Service" instances (not "Background
+Worker"), and Web Services expect HTTP traffic or they spin down after ~15
+minutes of inactivity. If you go this route instead of a VM, you'd need to
+add back a tiny built-in web server to `bot.py` (ask and I can provide it)
+and pair it with a free [UptimeRobot](https://uptimerobot.com) monitor
+pinging the service every few minutes to keep it awake. Note: Render's free
+tier uses shared outbound IPs, which can occasionally get temporarily
+blocked by Discord/Cloudflare if other free-tier apps on the same IP get
+flagged for abuse — this is the exact problem the Oracle Cloud VM approach
+above avoids.
+
+</details>
 
 ## How the daily posting + no-repeat cycle works
 
@@ -93,20 +154,11 @@ which runs Background Workers with no spin-down and no pinging required.
   back online later that day, it will post as soon as it's back up (once
   per day, never skipped or doubled).
 
-**Note on free hosting:** Render's free Web Service tier requires the
-keep-alive setup described above (UptimeRobot) or it will spin down and
-your bot will go offline until manually restarted or the next deploy. Even
-with a pinger running, free tiers can occasionally be less reliable than a
-paid instance — if you want zero-maintenance guaranteed uptime, the Starter
-plan ($7/month, deployed as a Background Worker instead) removes the need
-for the web server trick and the external pinger entirely. Also, `state.json`
-lives on the container's local disk, so a full redeploy could reset the
-cycle progress (you'd just get a fresh reshuffle, not a crash) — the daily
-posting itself won't be disrupted.
-
 ## Customizing
 
 - **Add/remove verses:** edit the `VERSES` list in `verses.py`, then rerun `python test_verses.py` to confirm the new entries resolve.
 - **Change translation:** set `TRANSLATION` in `.env` to any code bible-api.com supports (e.g. `web`, `kjv`, `oeb-us`, `bbe`).
 - **Change post time:** set `POST_HOUR` in `.env` (24-hour, Eastern Time).
 - **Change the look:** edit the `discord.Embed(...)` block in `bot.py` (title, color, etc.).
+- **Update the code later:** on the VM, `cd discord-verse-bot && git pull && sudo systemctl restart discord-verse-bot`.
+

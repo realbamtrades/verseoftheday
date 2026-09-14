@@ -21,7 +21,6 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 import discord
-from aiohttp import web
 from discord.ext import tasks
 from dotenv import load_dotenv
 
@@ -33,7 +32,6 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 TRANSLATION = os.getenv("TRANSLATION", "kjv")
 POST_HOUR = int(os.getenv("POST_HOUR", "9"))  # 24-hour, in TIMEZONE below
-PORT = int(os.getenv("PORT", "10000"))  # Render sets this automatically for Web Services
 TIMEZONE = ZoneInfo("America/New_York")  # Eastern Time, auto-adjusts for DST
 
 STATE_FILE = Path(__file__).parent / "state.json"
@@ -153,6 +151,13 @@ async def before_daily_verse_check():
     await client.wait_until_ready()
 
 
+@daily_verse_check.error
+async def daily_verse_check_error(error):
+    import traceback
+    print(f"[verse-bot] ERROR in daily_verse_check loop: {error}")
+    traceback.print_exception(type(error), error, error.__traceback__)
+
+
 @client.event
 async def on_ready():
     print(f"[verse-bot] Logged in as {client.user} (ID: {client.user.id})")
@@ -163,29 +168,12 @@ async def on_ready():
 
 
 # ---------- Tiny web server (required for Render's free Web Service tier) ----------
-# Render's free plan only keeps "Web Services" (not Background Workers) at no cost,
-# but a Web Service is expected to respond to HTTP requests. The bot itself doesn't
-# need this for anything — it's purely so Render (and an external uptime pinger, see
-# README) has something to check so the service doesn't get marked idle.
-
-async def health_check(request):
-    return web.Response(text="Verse bot is running.")
-
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    print(f"[verse-bot] Health-check web server listening on port {PORT}")
-
-
-async def main():
-    await start_web_server()
-    await client.start(DISCORD_TOKEN)
+# Only relevant if you host on Render's free tier. Not used or needed when running
+# on your own VM (e.g. Oracle Cloud) — a real always-on server has no HTTP
+# health-check requirement, so this is left out of the VM setup entirely.
+# If you switch back to Render's free tier later, see the README for how to add
+# this back.
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    client.run(DISCORD_TOKEN)
