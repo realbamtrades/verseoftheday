@@ -106,7 +106,7 @@ async def build_verse_embed(session: aiohttp.ClientSession, state: dict) -> disc
             embed = discord.Embed(
                 title="📖 Verse of the Day",
                 description=f'*"{verse["text"]}"*',
-                color=discord.Color.gold(),
+                color=discord.Color.from_rgb(255, 255, 255),
             )
             embed.set_footer(text=f'{verse["reference"]} ({verse["translation"]})')
             return embed
