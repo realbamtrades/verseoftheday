@@ -19,14 +19,14 @@ from verses import VERSES
 TRANSLATION = os.getenv("TRANSLATION", "kjv")
 
 
-async def check(session, reference, retries=3):
+async def check(session, reference, retries=5):
     url = f"https://bible-api.com/{quote(reference)}"
     for attempt in range(retries):
         try:
             async with session.get(url, params={"translation": TRANSLATION}, timeout=15) as resp:
                 if resp.status == 429:
-                    # Rate limited — back off and try again rather than failing it outright.
-                    await asyncio.sleep(2 * (attempt + 1))
+                    # Rate limited — back off harder each time rather than failing it outright.
+                    await asyncio.sleep(3 * (2 ** attempt))
                     continue
                 if resp.status != 200:
                     return reference, False, f"HTTP {resp.status}"
@@ -41,7 +41,7 @@ async def check(session, reference, retries=3):
 
 async def main():
     print(f"Checking {len(VERSES)} references against bible-api.com (translation={TRANSLATION})...")
-    print("This goes one at a time with a short pause to avoid the free API's rate limit — it'll take a few minutes.\n")
+    print("This goes one at a time with pauses to respect the free API's rate limit — it can take 10-15 minutes for the full list. That's normal.\n")
     failures = []
     async with aiohttp.ClientSession() as session:
         for i, reference in enumerate(VERSES, start=1):
@@ -52,9 +52,24 @@ async def main():
                 print(f"  ❌ {reference}  ->  {info}")
             elif i % 25 == 0:
                 print(f"  ...{i}/{len(VERSES)} checked")
-            await asyncio.sleep(0.4)  # be polite to the free API
+            await asyncio.sleep(1.2)  # be polite to the free API
 
-    print(f"\nDone. {len(VERSES) - len(failures)}/{len(VERSES)} references resolved successfully.")
+    print(f"\nDone with first pass. {len(VERSES) - len(failures)}/{len(VERSES)} resolved.")
+
+    if failures:
+        print(f"\nRetrying {len(failures)} that failed (rate limit window has likely reset by now)...\n")
+        still_failing = []
+        async with aiohttp.ClientSession() as session:
+            for reference, _ in failures:
+                result = await check(session, reference)
+                _, ok, info = result
+                if not ok:
+                    still_failing.append((reference, info))
+                    print(f"  ❌ {reference}  ->  {info}")
+                await asyncio.sleep(1.2)
+        failures = still_failing
+
+    print(f"\nFinal result: {len(VERSES) - len(failures)}/{len(VERSES)} references resolved successfully.")
     if failures:
         print("\nReferences to fix or remove from verses.py:")
         for reference, info in failures:
