@@ -157,7 +157,7 @@ above avoids.
 ## Customizing
 
 - **Add/remove verses:** edit the `VERSES` list in `verses.py`, then rerun `python test_verses.py` to confirm the new entries resolve.
-- **Change translation:** set `TRANSLATION` in `.env` to any code bible-api.com supports (e.g. `web`, `kjv`, `oeb-us`, `bbe`).
+- **Change translation:** set `TRANSLATION` in `.env`. Options: `kjv`, `web`, `bbe`, `oeb-us` (via bible-api.com), or `nlt` (via Tyndale House's official free NLT API — set `NLT_API_KEY` too if you get your own key at api.nlt.to, otherwise the shared `TEST` key works fine for a once-a-day bot).
 - **Change post time:** set `POST_HOUR` in `.env` (24-hour, Eastern Time).
 - **Change the look:** edit the `discord.Embed(...)` block in `bot.py` (title, color, etc.).
 - **Update the code later:** on the VM, `cd discord-verse-bot && git pull && sudo systemctl restart discord-verse-bot`.

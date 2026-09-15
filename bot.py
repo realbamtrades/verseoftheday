@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 import discord
+from bs4 import BeautifulSoup
 from discord.ext import tasks
 from dotenv import load_dotenv
 
@@ -31,6 +32,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 TRANSLATION = os.getenv("TRANSLATION", "kjv")
+NLT_API_KEY = os.getenv("NLT_API_KEY", "TEST")  # "TEST" works for low-volume free use
 POST_HOUR = int(os.getenv("POST_HOUR", "9"))  # 24-hour, in TIMEZONE below
 TIMEZONE = ZoneInfo("America/New_York")  # Eastern Time, auto-adjusts for DST
 
@@ -72,7 +74,8 @@ def get_next_reference(state: dict) -> str:
 
 # ---------- Fetching verse text ----------
 
-async def fetch_verse(session: aiohttp.ClientSession, reference: str) -> dict | None:
+async def fetch_verse_bible_api(session: aiohttp.ClientSession, reference: str) -> dict | None:
+    """Public-domain translations (kjv, web, bbe, oeb-us, etc.) via bible-api.com."""
     url = f"https://bible-api.com/{quote(reference)}"
     params = {"translation": TRANSLATION}
     for attempt in range(3):
@@ -95,6 +98,51 @@ async def fetch_verse(session: aiohttp.ClientSession, reference: str) -> dict | 
             print(f"[verse-bot] Error fetching '{reference}': {e}")
             return None
     return None
+
+
+def _parse_nlt_html(html: str) -> str | None:
+    """Strip footnotes, verse numbers, and headings from the NLT API's HTML
+    response, leaving just the clean verse text."""
+    soup = BeautifulSoup(html, "html.parser")
+    container = soup.find(id="bibletext")
+    if container is None:
+        return None
+    for tag in container.find_all(class_=["a-tn", "tn", "vn", "bk_ch_vs_header", "subhead", "chapter-number"]):
+        tag.decompose()
+    text = container.get_text(separator=" ", strip=True)
+    text = " ".join(text.split())
+    return text or None
+
+
+async def fetch_verse_nlt(session: aiohttp.ClientSession, reference: str) -> dict | None:
+    """New Living Translation via Tyndale House's official free NLT API
+    (api.nlt.to). Free for non-commercial use; the shared 'TEST' key is
+    rate-limited (50 verses/request, 500 requests/day) but far more than a
+    once-a-day bot needs. Set NLT_API_KEY in .env to use your own key instead."""
+    url = "https://api.nlt.to/api/passages"
+    params = {"ref": reference, "key": NLT_API_KEY}
+    try:
+        async with session.get(url, params=params, timeout=15) as resp:
+            if resp.status != 200:
+                return None
+            html = await resp.text()
+            text = _parse_nlt_html(html)
+            if not text:
+                return None
+            return {
+                "reference": reference,
+                "text": text,
+                "translation": "NLT",
+            }
+    except Exception as e:
+        print(f"[verse-bot] Error fetching NLT '{reference}': {e}")
+        return None
+
+
+async def fetch_verse(session: aiohttp.ClientSession, reference: str) -> dict | None:
+    if TRANSLATION.lower() == "nlt":
+        return await fetch_verse_nlt(session, reference)
+    return await fetch_verse_bible_api(session, reference)
 
 
 async def build_verse_embed(session: aiohttp.ClientSession, state: dict) -> discord.Embed | None:

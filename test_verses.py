@@ -13,13 +13,45 @@ import os
 from urllib.parse import quote
 
 import aiohttp
+from bs4 import BeautifulSoup
 
 from verses import VERSES
 
 TRANSLATION = os.getenv("TRANSLATION", "kjv")
+NLT_API_KEY = os.getenv("NLT_API_KEY", "TEST")
 
 
-async def check(session, reference, retries=5):
+def _parse_nlt_html(html: str) -> str | None:
+    soup = BeautifulSoup(html, "html.parser")
+    container = soup.find(id="bibletext")
+    if container is None:
+        return None
+    for tag in container.find_all(class_=["a-tn", "tn", "vn", "bk_ch_vs_header", "subhead", "chapter-number"]):
+        tag.decompose()
+    text = " ".join(container.get_text(separator=" ", strip=True).split())
+    return text or None
+
+
+async def check_nlt(session, reference, retries=3):
+    url = "https://api.nlt.to/api/passages"
+    for attempt in range(retries):
+        try:
+            async with session.get(url, params={"ref": reference, "key": NLT_API_KEY}, timeout=15) as resp:
+                if resp.status == 429:
+                    await asyncio.sleep(3 * (2 ** attempt))
+                    continue
+                if resp.status != 200:
+                    return reference, False, f"HTTP {resp.status}"
+                text = _parse_nlt_html(await resp.text())
+                if not text:
+                    return reference, False, "empty/unparseable response"
+                return reference, True, text[:60]
+        except Exception as e:
+            return reference, False, str(e)
+    return reference, False, "rate limited after retries"
+
+
+async def check_bible_api(session, reference, retries=5):
     url = f"https://bible-api.com/{quote(reference)}"
     for attempt in range(retries):
         try:
@@ -39,9 +71,16 @@ async def check(session, reference, retries=5):
     return reference, False, "HTTP 429 (rate limited after retries)"
 
 
+async def check(session, reference):
+    if TRANSLATION.lower() == "nlt":
+        return await check_nlt(session, reference)
+    return await check_bible_api(session, reference)
+
+
 async def main():
-    print(f"Checking {len(VERSES)} references against bible-api.com (translation={TRANSLATION})...")
-    print("This goes one at a time with pauses to respect the free API's rate limit — it can take 10-15 minutes for the full list. That's normal.\n")
+    source = "api.nlt.to" if TRANSLATION.lower() == "nlt" else "bible-api.com"
+    print(f"Checking {len(VERSES)} references against {source} (translation={TRANSLATION})...")
+    print("This goes one at a time with pauses to respect rate limits — it can take 10-15 minutes for the full list. That's normal.\n")
     failures = []
     async with aiohttp.ClientSession() as session:
         for i, reference in enumerate(VERSES, start=1):
